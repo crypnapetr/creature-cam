@@ -207,6 +207,113 @@ class FaceTracker:
         cv2.fillPoly(mask, [face_points], 255)
         return mask
 
+    def create_full_head_mask(self,
+                             frame: np.ndarray,
+                             landmarks: FaceLandmarks,
+                             expansion_factor: float = 1.4,
+                             forehead_extension: int = 150,
+                             temple_extension: int = 80,
+                             neck_extension: int = 100) -> np.ndarray:
+        """
+        Create extended mask covering entire head (face + hair + ears + neck)
+        Achieves 100% head coverage for complete character replacement
+
+        Args:
+            frame: Frame to create mask for
+            landmarks: FaceLandmarks object
+            expansion_factor: Factor to expand face oval (1.4 = 40% larger)
+            forehead_extension: Pixels to extend above eyebrows for hair
+            temple_extension: Pixels to extend on sides for ears
+            neck_extension: Pixels to extend below chin for neck
+
+        Returns:
+            Binary mask (255 for head region, 0 for background)
+        """
+        h, w = frame.shape[:2]
+        mask = np.zeros((h, w), dtype=np.uint8)
+
+        # Step 1: Start with face oval polygon
+        face_points = landmarks.image_landmarks[landmarks.face_oval_indices]
+        cv2.fillPoly(mask, [face_points], 255)
+
+        # Step 2: Morphological dilation for expanded coverage
+        # Dilate 30-40 pixels in all directions
+        kernel_size = int(40 * expansion_factor)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        mask = cv2.dilate(mask, kernel, iterations=1)
+
+        # Step 3: Add forehead rectangle (for hair coverage)
+        # Find eyebrow region (top of eyes)
+        left_eye_points = landmarks.image_landmarks[landmarks.left_eye_indices]
+        right_eye_points = landmarks.image_landmarks[landmarks.right_eye_indices]
+        eyebrow_y = int(min(left_eye_points[:, 1].min(), right_eye_points[:, 1].min()))
+
+        # Extend from top of image to below eyebrows
+        forehead_top = 0
+        forehead_bottom = eyebrow_y + forehead_extension
+
+        # Get horizontal bounds from face oval
+        face_x_min = int(face_points[:, 0].min())
+        face_x_max = int(face_points[:, 0].max())
+        face_center_x = (face_x_min + face_x_max) // 2
+        face_width = face_x_max - face_x_min
+
+        # Forehead rectangle (centered, wider than face)
+        forehead_left = max(0, face_center_x - int(face_width * 0.7))
+        forehead_right = min(w, face_center_x + int(face_width * 0.7))
+
+        cv2.rectangle(mask,
+                     (forehead_left, forehead_top),
+                     (forehead_right, forehead_bottom),
+                     255, -1)
+
+        # Step 4: Add temple regions (for ears/side hair)
+        # Get face vertical bounds
+        face_y_min = int(face_points[:, 1].min())
+        face_y_max = int(face_points[:, 1].max())
+        face_height = face_y_max - face_y_min
+
+        # Left temple (extends from face edge)
+        left_temple_right = face_x_min + 20  # Overlap slightly
+        left_temple_left = max(0, face_x_min - temple_extension)
+        temple_top = face_y_min
+        temple_bottom = face_y_min + int(face_height * 0.6)  # Cover upper 60%
+
+        cv2.rectangle(mask,
+                     (left_temple_left, temple_top),
+                     (left_temple_right, temple_bottom),
+                     255, -1)
+
+        # Right temple
+        right_temple_left = face_x_max - 20  # Overlap slightly
+        right_temple_right = min(w, face_x_max + temple_extension)
+
+        cv2.rectangle(mask,
+                     (right_temple_left, temple_top),
+                     (right_temple_right, temple_bottom),
+                     255, -1)
+
+        # Step 5: Add chin extension (for neck coverage)
+        # Extend from chin to bottom of frame
+        chin_y = int(face_points[:, 1].max())
+        neck_top = chin_y - 20  # Overlap slightly
+        neck_bottom = min(h, chin_y + neck_extension)
+
+        # Neck rectangle (narrower than face, tapers down)
+        neck_left = face_center_x - int(face_width * 0.4)
+        neck_right = face_center_x + int(face_width * 0.4)
+
+        cv2.rectangle(mask,
+                     (neck_left, neck_top),
+                     (neck_right, neck_bottom),
+                     255, -1)
+
+        # Step 6: Feather the edges for smooth blending
+        # Use larger kernel for very smooth transitions
+        mask = cv2.GaussianBlur(mask, (21, 21), 15)
+
+        return mask
+
     def release(self):
         """Release MediaPipe resources"""
         self.landmarker.close()

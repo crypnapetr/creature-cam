@@ -25,6 +25,7 @@ Once running, use these keyboard shortcuts:
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
+| `v` | **Toggle VTUBER mode** 🎭 (full character with static background) |
 | `p` | **Toggle PUPPETEER mode** (face swapping with expression transfer) |
 | `l` | Toggle landmark visualization |
 | `s` | Toggle stats display |
@@ -33,16 +34,24 @@ Once running, use these keyboard shortcuts:
 | `+` or `=` | Increase transformation intensity - texture mode only |
 | `-` | Decrease transformation intensity - texture mode only |
 
-## ⭐ Puppeteer Mode vs Texture Mode
+## ⭐ VTuber Mode vs Puppeteer Mode vs Texture Mode
+
+**VTUBER MODE** (Press `v`) - **🎭 NEW & RECOMMENDED!**:
+- **Full character transformation** with static background
+- Entire character body displayed (not just face)
+- Character's face animates with your expressions
+- **100% head coverage** - your real face is never visible
+- Static background replaces webcam feed
+- **This is the ultimate Trump-Crab experience!**
 
 **PUPPETEER MODE** (Press `p`):
-- Trump's face actually **moves with your expressions**
+- Trump's face **moves with your expressions**
 - His mouth opens when you talk
 - Eyebrows move, eyes blink with yours
 - Full face swapping with expression transfer
-- **This is what you want for realistic Trump-Crab effect!**
+- Webcam background remains visible
 
-**TEXTURE MODE**:
+**TEXTURE MODE** (Default when face not detected):
 - Static texture overlay on your face
 - No expression transfer
 - Legacy mode from initial implementation

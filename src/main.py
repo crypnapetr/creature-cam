@@ -12,6 +12,9 @@ from camera_capture import CameraCapture
 from face_tracker import FaceTracker
 from texture_engine import TextureEngine
 from face_puppeteer import FacePuppeteer
+from vtuber_renderer import VTuberRenderer
+from vtuber_character import CharacterAsset
+from background_manager import BackgroundManager
 
 
 class CreatureCam:
@@ -27,6 +30,8 @@ class CreatureCam:
         self.tracker = None
         self.texture_engine = None
         self.puppeteer = None
+        self.vtuber_renderer = None
+        self.background_manager = None
 
         # Performance tracking
         self.frame_count = 0
@@ -38,6 +43,7 @@ class CreatureCam:
         self.show_landmarks = False
         self.show_stats = True
         self.use_puppeteer = False  # Toggle between texture and puppeteer mode
+        self.use_vtuber = False  # Toggle for VTuber mode (full character)
 
     def initialize(self) -> bool:
         """
@@ -88,9 +94,8 @@ class CreatureCam:
 
                 if puppet_landmarks is not None:
                     self.puppeteer.set_puppet_landmarks(puppet_landmarks)
-                    self.use_puppeteer = True  # Start in puppeteer mode
                     print("✅ Face puppeteering enabled!")
-                    print("   Press 'p' to toggle between texture and puppeteer modes")
+                    print("   Press 'p' to toggle puppeteer mode")
                 else:
                     print("⚠️  No face detected in puppet image")
                     print("   Puppeteering disabled, using texture mode")
@@ -102,6 +107,50 @@ class CreatureCam:
                 self.puppeteer = None
         else:
             print("No puppet image found (texture mode only)")
+
+        # Try to initialize VTuber mode (optional but preferred)
+        print("\nChecking for VTuber mode...")
+        backgrounds_dir = Path(__file__).parent.parent / "backgrounds"
+
+        try:
+            # Initialize background manager
+            self.background_manager = BackgroundManager(backgrounds_dir)
+
+            # Initialize character
+            character_dir = self.textures_dir / "trump-crab"
+            character_path = character_dir / "character.png"
+
+            if character_path.exists() or (character_dir / "skin.png").exists():
+                print(f"Loading character from: {character_dir.name}")
+                character = CharacterAsset(character_dir)
+
+                # Initialize character (auto-detect face region if needed)
+                if character.initialize(auto_detect=False):
+                    # Initialize VTuber renderer
+                    self.vtuber_renderer = VTuberRenderer()
+                    self.vtuber_renderer.set_background_manager(self.background_manager)
+                    self.vtuber_renderer.set_character(character)
+                    self.vtuber_renderer.set_face_tracker(self.tracker)
+
+                    # Start in VTuber mode by default
+                    self.use_vtuber = True
+                    self.use_puppeteer = False
+
+                    print("✅ VTuber mode enabled!")
+                    print("   Press 'v' to toggle VTuber mode")
+                    print("   Press 'p' to toggle puppeteer mode")
+                    print("   🎭 Full character transformation with static background")
+                else:
+                    print("⚠️  Failed to initialize character")
+                    print("   VTuber mode disabled")
+            else:
+                print(f"No character image found in {character_dir}")
+                print("   VTuber mode disabled")
+
+        except Exception as e:
+            print(f"⚠️  Failed to initialize VTuber mode: {e}")
+            print("   Using puppeteer/texture mode")
+            self.vtuber_renderer = None
 
         return True
 
@@ -116,11 +165,13 @@ class CreatureCam:
         print("  q - Quit")
         print("  l - Toggle landmark visualization")
         print("  s - Toggle stats")
+        if self.vtuber_renderer:
+            print("  v - Toggle VTuber mode (full character)")
         if self.puppeteer:
-            print("  p - Toggle puppeteer/texture mode")
-        print("  1-9 - Cycle through creatures")
-        print("  + - Increase transformation intensity")
-        print("  - - Decrease transformation intensity")
+            print("  p - Toggle puppeteer mode (face swap)")
+        print("  1-9 - Cycle through creatures (texture mode)")
+        print("  + - Increase transformation intensity (texture mode)")
+        print("  - - Decrease transformation intensity (texture mode)")
         print("==============================\n")
 
         self.running = True
@@ -149,12 +200,26 @@ class CreatureCam:
         # Track face
         landmarks = self.tracker.process_frame(frame)
 
-        # Apply transformation if face detected
-        if landmarks is not None:
-            # Use puppeteering or texture mode
+        # Apply transformation based on current mode
+        if self.use_vtuber and self.vtuber_renderer:
+            # VTuber mode: Full character replacement with static background
+            frame = self.vtuber_renderer.render_frame(frame, landmarks)
+
+            # Draw landmarks on VTuber output if enabled
+            if self.show_landmarks and landmarks is not None:
+                frame = self.tracker.draw_landmarks(
+                    frame, landmarks,
+                    draw_mesh=False,
+                    draw_contours=True
+                )
+
+        elif landmarks is not None:
+            # Puppeteer or texture mode (only if face detected)
             if self.use_puppeteer and self.puppeteer:
+                # Puppeteer mode: Face swap on webcam
                 frame = self.puppeteer.apply_puppeteering(frame, landmarks)
             else:
+                # Texture mode: Texture overlay
                 frame = self.texture_engine.apply_creature_transformation(frame, landmarks)
 
             # Draw landmarks if enabled
@@ -183,7 +248,13 @@ class CreatureCam:
             self.fps = self.frame_count / elapsed
 
         # Prepare stats text
-        mode = "PUPPETEER" if (self.use_puppeteer and self.puppeteer) else "TEXTURE"
+        if self.use_vtuber and self.vtuber_renderer:
+            mode = "VTUBER"
+        elif self.use_puppeteer and self.puppeteer:
+            mode = "PUPPETEER"
+        else:
+            mode = "TEXTURE"
+
         stats = [
             f"FPS: {self.fps:.1f}",
             f"Mode: {mode}",
@@ -221,12 +292,32 @@ class CreatureCam:
             self.show_stats = not self.show_stats
             print(f"Stats display: {self.show_stats}")
 
+        elif key == ord('v'):
+            # Toggle VTuber mode
+            if self.vtuber_renderer:
+                self.use_vtuber = not self.use_vtuber
+                if self.use_vtuber:
+                    # When enabling VTuber, disable puppeteer
+                    self.use_puppeteer = False
+                    print("Mode switched to: VTUBER (full character)")
+                else:
+                    print("Mode switched to: TEXTURE")
+            else:
+                print("VTuber mode not available")
+
         elif key == ord('p'):
             # Toggle puppeteer mode
             if self.puppeteer:
-                self.use_puppeteer = not self.use_puppeteer
-                mode = "PUPPETEER" if self.use_puppeteer else "TEXTURE"
-                print(f"Mode switched to: {mode}")
+                if self.use_vtuber:
+                    # If VTuber is active, switch to puppeteer
+                    self.use_vtuber = False
+                    self.use_puppeteer = True
+                    print("Mode switched to: PUPPETEER (face swap)")
+                else:
+                    # Toggle between puppeteer and texture
+                    self.use_puppeteer = not self.use_puppeteer
+                    mode = "PUPPETEER" if self.use_puppeteer else "TEXTURE"
+                    print(f"Mode switched to: {mode}")
             else:
                 print("Puppeteer not available")
 
