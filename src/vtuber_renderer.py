@@ -281,8 +281,14 @@ class VTuberRenderer:
         # Warp character face to match user expression
         character_img = self.character.get_character_image()
 
+        # Convert character image to BGR if it has alpha channel
+        if character_img.shape[2] == 4:
+            character_img_bgr = character_img[:, :, :3]
+        else:
+            character_img_bgr = character_img
+
         warped_face = self.face_warper.warp_character_face(
-            character_img,
+            character_img_bgr,
             character_landmarks,
             user_landmarks,
             webcam_frame.shape

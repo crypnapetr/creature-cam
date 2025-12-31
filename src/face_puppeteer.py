@@ -218,6 +218,10 @@ class FacePuppeteer:
         if src_cropped.size == 0 or dst_rect[2] <= 0 or dst_rect[3] <= 0:
             return
 
+        # Convert RGBA to BGR if needed (for character images with alpha channel)
+        if src_cropped.shape[2] == 4:
+            src_cropped = src_cropped[:, :, :3]
+
         # Compute affine transform
         warp_mat = cv2.getAffineTransform(src_tri_cropped, dst_tri_cropped)
 
@@ -245,12 +249,32 @@ class FacePuppeteer:
         if dst_y1 < 0 or dst_y2 > h or dst_x1 < 0 or dst_x2 > w:
             return
 
-        # Blend using mask
-        mask_3ch = cv2.merge([mask, mask, mask]) / 255.0
-        dst_image[dst_y1:dst_y2, dst_x1:dst_x2] = (
-            dst_image[dst_y1:dst_y2, dst_x1:dst_x2] * (1 - mask_3ch) +
-            dst_cropped * mask_3ch
-        ).astype(np.uint8)
+        # Handle both BGR and RGBA destination images
+        num_channels = dst_image.shape[2] if len(dst_image.shape) > 2 else 1
+
+        if num_channels == 4:
+            # RGBA destination - use 4 channel mask
+            mask_4ch = cv2.merge([mask, mask, mask, mask]) / 255.0
+            # Ensure dst_cropped has alpha channel
+            if dst_cropped.shape[2] == 3:
+                alpha = np.ones((dst_cropped.shape[0], dst_cropped.shape[1], 1), dtype=np.uint8) * 255
+                dst_cropped = np.concatenate([dst_cropped, alpha], axis=2)
+
+            dst_image[dst_y1:dst_y2, dst_x1:dst_x2] = (
+                dst_image[dst_y1:dst_y2, dst_x1:dst_x2] * (1 - mask_4ch) +
+                dst_cropped * mask_4ch
+            ).astype(np.uint8)
+        else:
+            # BGR destination - use 3 channel mask
+            mask_3ch = cv2.merge([mask, mask, mask]) / 255.0
+            # Ensure dst_cropped is BGR
+            if dst_cropped.shape[2] == 4:
+                dst_cropped = dst_cropped[:, :, :3]
+
+            dst_image[dst_y1:dst_y2, dst_x1:dst_x2] = (
+                dst_image[dst_y1:dst_y2, dst_x1:dst_x2] * (1 - mask_3ch) +
+                dst_cropped * mask_3ch
+            ).astype(np.uint8)
 
     def _create_face_mask(self, landmarks: FaceLandmarks, shape: Tuple[int, int]) -> np.ndarray:
         """
