@@ -167,6 +167,7 @@ class CreatureCam:
         print("  s - Toggle stats")
         if self.vtuber_renderer:
             print("  v - Toggle VTuber mode (full character)")
+            print("  r - Reload character (after changing character.png)")
         if self.puppeteer:
             print("  p - Toggle puppeteer mode (face swap)")
         print("  1-9 - Cycle through creatures (texture mode)")
@@ -291,6 +292,25 @@ class CreatureCam:
             # Toggle stats
             self.show_stats = not self.show_stats
             print(f"Stats display: {self.show_stats}")
+
+        elif key == ord('r'):
+            # Reload character (for when you change character.png)
+            if self.vtuber_renderer:
+                print("\n🔄 Reloading character...")
+                try:
+                    # Re-initialize character
+                    character_dir = self.textures_dir / "trump-crab"
+                    character = CharacterAsset(character_dir)
+
+                    if character.initialize(auto_detect=True):
+                        self.vtuber_renderer.set_character(character)
+                        print("✅ Character reloaded successfully!")
+                    else:
+                        print("❌ Failed to reload character")
+                except Exception as e:
+                    print(f"❌ Error reloading character: {e}")
+            else:
+                print("VTuber mode not available")
 
         elif key == ord('v'):
             # Toggle VTuber mode

@@ -155,8 +155,10 @@ class VTuberRenderer:
             character.get_face_landmarks()
         )
 
-        # Invalidate caches
+        # Invalidate all caches when character changes
         self._cached_character_body = None
+        self._cached_warped_face = None
+        self._cached_background = None
 
         print(f"✅ Character configured: {character.character_dir.name}")
 
