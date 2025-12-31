@@ -119,6 +119,9 @@ class VTuberRenderer:
         # Performance cache
         self._cached_background: Optional[np.ndarray] = None
         self._cached_character_body: Optional[np.ndarray] = None
+        self._cached_warped_face: Optional[np.ndarray] = None
+        self._cached_frame_count: int = 0
+        self._warp_every_n_frames: int = 2  # Only warp every 2 frames for better performance
 
         print("✅ VTuber renderer initialized")
 
@@ -213,6 +216,10 @@ class VTuberRenderer:
         if self.character is None:
             return background
 
+        # Use cached body composite if available
+        if self._cached_character_body is not None:
+            return self._cached_character_body
+
         # Get character image and body mask
         character_img = self.character.get_character_image()
         body_mask = self.character.get_body_mask()
@@ -253,6 +260,9 @@ class VTuberRenderer:
             (x, y)
         )
 
+        # Cache for future frames (body is static)
+        self._cached_character_body = output
+
         return output
 
     def _composite_animated_face(self,
@@ -272,6 +282,14 @@ class VTuberRenderer:
         """
         if self.character is None or self.face_tracker is None:
             return base
+
+        # Performance optimization: Only warp every N frames
+        self._cached_frame_count += 1
+        should_warp = (self._cached_frame_count % self._warp_every_n_frames == 0)
+
+        # If we have a cached face and shouldn't warp this frame, use cache
+        if not should_warp and self._cached_warped_face is not None:
+            return self._cached_warped_face
 
         # Get character face landmarks
         character_landmarks = self.character.get_face_landmarks()
@@ -338,8 +356,8 @@ class VTuberRenderer:
             webcam_frame.shape
         )
 
-        # Create canvas at output size
-        warped_face = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        # Start with the base image (background + body) instead of black canvas
+        warped_face = base.copy()
 
         # Place warped face region at character position
         # Calculate the region to place (ensuring it fits)
@@ -374,8 +392,11 @@ class VTuberRenderer:
             face_region = warped_face_region[src_y1:src_y2, src_x1:src_x2]
             face_region_resized = cv2.resize(face_region, (dst_w, dst_h))
 
-            # Place on canvas
-            warped_face[dst_y1:dst_y2, dst_x1:dst_x2] = face_region_resized
+            # Blend into base at character face position instead of replacing
+            roi = warped_face[dst_y1:dst_y2, dst_x1:dst_x2]
+            warped_face[dst_y1:dst_y2, dst_x1:dst_x2] = cv2.addWeighted(
+                face_region_resized, 0.9, roi, 0.1, 0
+            )
 
         # Create full head mask at character position
         # Transform user landmarks to character position on output canvas
@@ -417,6 +438,9 @@ class VTuberRenderer:
         # Blend warped face into base using the mask
         mask_3ch = cv2.merge([full_head_mask, full_head_mask, full_head_mask]) / 255.0
         output = (warped_face * mask_3ch + base * (1 - mask_3ch)).astype(np.uint8)
+
+        # Cache the result for next frame
+        self._cached_warped_face = output
 
         return output
 
