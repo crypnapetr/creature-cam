@@ -121,7 +121,7 @@ class VTuberRenderer:
         self._cached_character_body: Optional[np.ndarray] = None
         self._cached_warped_face: Optional[np.ndarray] = None
         self._cached_frame_count: int = 0
-        self._warp_every_n_frames: int = 2  # Only warp every 2 frames for better performance
+        self._warp_every_n_frames: int = 3  # Only warp every 3 frames for better performance
 
         print("✅ VTuber renderer initialized")
 
@@ -348,28 +348,7 @@ class VTuberRenderer:
             nose_indices=character_landmarks.nose_indices
         )
 
-        # Warp the resized character to match user expression
-        warped_face_region = self.face_warper.warp_character_face(
-            character_resized,
-            resized_char_landmarks,
-            user_landmarks,
-            webcam_frame.shape
-        )
-
-        # Start with the base image (background + body) instead of black canvas
-        warped_face = base.copy()
-
-        # Place warped face region at character position
-        # Calculate the region to place (ensuring it fits)
-        wf_h, wf_w = warped_face_region.shape[:2]
-
-        # Source region from warped face (user face bounds)
-        src_y1 = max(0, int(user_face_points[:, 1].min()))
-        src_y2 = min(wf_h, int(user_face_points[:, 1].max()))
-        src_x1 = max(0, int(user_face_points[:, 0].min()))
-        src_x2 = min(wf_w, int(user_face_points[:, 0].max()))
-
-        # Destination region on output canvas (character face position)
+        # Calculate destination face size on output canvas
         dst_y1 = char_y + int(char_face_points[:, 1].min() * scale)
         dst_y2 = char_y + int(char_face_points[:, 1].max() * scale)
         dst_x1 = char_x + int(char_face_points[:, 0].min() * scale)
@@ -381,46 +360,40 @@ class VTuberRenderer:
         dst_x1 = max(0, min(dst_x1, out_w))
         dst_x2 = max(0, min(dst_x2, out_w))
 
-        # Calculate dimensions
-        src_h = src_y2 - src_y1
-        src_w = src_x2 - src_x1
         dst_h = dst_y2 - dst_y1
         dst_w = dst_x2 - dst_x1
 
-        if src_h > 0 and src_w > 0 and dst_h > 0 and dst_w > 0:
-            # Resize source region to fit destination
-            face_region = warped_face_region[src_y1:src_y2, src_x1:src_x2]
-            face_region_resized = cv2.resize(face_region, (dst_w, dst_h))
+        if dst_h <= 0 or dst_w <= 0:
+            return base
 
-            # Blend into base at character face position instead of replacing
-            roi = warped_face[dst_y1:dst_y2, dst_x1:dst_x2]
-            warped_face[dst_y1:dst_y2, dst_x1:dst_x2] = cv2.addWeighted(
-                face_region_resized, 0.9, roi, 0.1, 0
-            )
+        # Warp DIRECTLY to the destination size (no black space!)
+        # This is much faster and eliminates black regions
+        target_shape = (dst_h, dst_w, 3)
 
-        # Create full head mask at character position
-        # Transform user landmarks to character position on output canvas
-        scaled_user_landmarks = user_landmarks.image_landmarks.copy()
+        # Create target landmarks at destination size
+        # Scale user landmarks to fit destination region
+        target_landmarks_pts = user_landmarks.image_landmarks.copy()
 
-        # Get centers and scale
-        user_center_x = user_face_points[:, 0].mean()
-        user_center_y = user_face_points[:, 1].mean()
-        char_center_x = char_face_points[:, 0].mean() * scale + char_x
-        char_center_y = char_face_points[:, 1].mean() * scale + char_y
+        # Get user face bounds
+        user_face_min_x = user_face_points[:, 0].min()
+        user_face_min_y = user_face_points[:, 1].min()
+        user_face_max_x = user_face_points[:, 0].max()
+        user_face_max_y = user_face_points[:, 1].max()
+        user_face_center_x = (user_face_min_x + user_face_max_x) / 2
+        user_face_center_y = (user_face_min_y + user_face_max_y) / 2
 
-        # Scale to match character face size
-        face_scale_w = (char_face_w * scale) / user_face_w if user_face_w > 0 else 1.0
-        face_scale_h = (char_face_h * scale) / user_face_h if user_face_h > 0 else 1.0
-        face_scale = min(face_scale_w, face_scale_h)
+        # Transform user landmarks to target region: center, scale, position
+        scale_x = dst_w / user_face_w if user_face_w > 0 else 1.0
+        scale_y = dst_h / user_face_h if user_face_h > 0 else 1.0
+        target_scale = min(scale_x, scale_y) * 0.95  # Slightly smaller to avoid edges
 
-        # Transform: center, scale, then position at character location
-        scaled_user_landmarks[:, 0] = (scaled_user_landmarks[:, 0] - user_center_x) * face_scale + char_center_x
-        scaled_user_landmarks[:, 1] = (scaled_user_landmarks[:, 1] - user_center_y) * face_scale + char_center_y
+        target_landmarks_pts[:, 0] = (target_landmarks_pts[:, 0] - user_face_center_x) * target_scale + dst_w / 2
+        target_landmarks_pts[:, 1] = (target_landmarks_pts[:, 1] - user_face_center_y) * target_scale + dst_h / 2
 
-        # Create scaled user landmarks object
-        scaled_user_landmarks_obj = FaceLandmarks(
+        from face_tracker import FaceLandmarks
+        target_landmarks = FaceLandmarks(
             landmarks=user_landmarks.landmarks,
-            image_landmarks=scaled_user_landmarks,
+            image_landmarks=target_landmarks_pts,
             face_oval_indices=user_landmarks.face_oval_indices,
             left_eye_indices=user_landmarks.left_eye_indices,
             right_eye_indices=user_landmarks.right_eye_indices,
@@ -428,21 +401,38 @@ class VTuberRenderer:
             nose_indices=user_landmarks.nose_indices
         )
 
-        # Create full head mask at output size
-        temp_frame = np.zeros((out_h, out_w, 3), dtype=np.uint8)
-        full_head_mask = self.face_tracker.create_full_head_mask(
-            temp_frame,
-            scaled_user_landmarks_obj
+        # Warp character face directly to target size
+        warped_face_region = self.face_warper.warp_character_face(
+            character_resized,
+            resized_char_landmarks,
+            target_landmarks,
+            target_shape
         )
 
-        # Blend warped face into base using the mask
-        mask_3ch = cv2.merge([full_head_mask, full_head_mask, full_head_mask]) / 255.0
-        output = (warped_face * mask_3ch + base * (1 - mask_3ch)).astype(np.uint8)
+        # Start with the base image
+        warped_face = base.copy()
+
+        # Blend the warped face region directly at the destination
+        if warped_face_region.shape[0] == dst_h and warped_face_region.shape[1] == dst_w:
+            roi = warped_face[dst_y1:dst_y2, dst_x1:dst_x2]
+
+            # Create a tight mask for just this face region
+            temp_frame_region = np.zeros((dst_h, dst_w, 3), dtype=np.uint8)
+            face_mask_region = self.face_tracker.create_full_head_mask(
+                temp_frame_region,
+                target_landmarks
+            )
+
+            # Apply mask for smooth blending
+            mask_3ch = cv2.merge([face_mask_region, face_mask_region, face_mask_region]) / 255.0
+            blended = (warped_face_region * mask_3ch + roi * (1 - mask_3ch)).astype(np.uint8)
+
+            warped_face[dst_y1:dst_y2, dst_x1:dst_x2] = blended
 
         # Cache the result for next frame
-        self._cached_warped_face = output
+        self._cached_warped_face = warped_face
 
-        return output
+        return warped_face
 
     def _alpha_blend(self,
                     background: np.ndarray,
