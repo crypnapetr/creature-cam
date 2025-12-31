@@ -81,7 +81,10 @@ class CreatureCam:
 
         # Try to initialize face puppeteering (optional)
         print("\nChecking for face puppeteer...")
-        puppet_path = self.textures_dir / "trump-crab" / "skin.png"
+        # Use character.png if available, fallback to skin.png
+        puppet_path = self.textures_dir / "trump-crab" / "character.png"
+        if not puppet_path.exists():
+            puppet_path = self.textures_dir / "trump-crab" / "skin.png"
 
         if puppet_path.exists():
             print(f"Found puppet image: {puppet_path.name}")
@@ -295,22 +298,43 @@ class CreatureCam:
 
         elif key == ord('r'):
             # Reload character (for when you change character.png)
-            if self.vtuber_renderer:
-                print("\n🔄 Reloading character...")
-                try:
-                    # Re-initialize character
-                    character_dir = self.textures_dir / "trump-crab"
-                    character = CharacterAsset(character_dir)
+            print("\n🔄 Reloading character...")
+            try:
+                character_dir = self.textures_dir / "trump-crab"
 
+                # Reload VTuber character
+                if self.vtuber_renderer:
+                    character = CharacterAsset(character_dir)
                     if character.initialize(auto_detect=True):
                         self.vtuber_renderer.set_character(character)
-                        print("✅ Character reloaded successfully!")
+                        print("✅ VTuber character reloaded!")
                     else:
-                        print("❌ Failed to reload character")
-                except Exception as e:
-                    print(f"❌ Error reloading character: {e}")
-            else:
-                print("VTuber mode not available")
+                        print("❌ Failed to reload VTuber character")
+
+                # Reload Puppeteer character
+                if self.puppeteer:
+                    puppet_path = character_dir / "character.png"
+                    if puppet_path.exists():
+                        print("🔄 Reloading puppeteer...")
+                        # Create new puppeteer
+                        new_puppeteer = FacePuppeteer(puppet_path)
+
+                        # Detect landmarks on new puppet image
+                        puppet_landmarks = self.tracker.process_frame(new_puppeteer.puppet.image)
+
+                        if puppet_landmarks is not None:
+                            new_puppeteer.set_puppet_landmarks(puppet_landmarks)
+                            self.puppeteer = new_puppeteer
+                            print("✅ Puppeteer reloaded!")
+                        else:
+                            print("⚠️  No face detected in new character image")
+                    else:
+                        print("⚠️  character.png not found for puppeteer")
+
+                print("✅ Reload complete!")
+
+            except Exception as e:
+                print(f"❌ Error reloading: {e}")
 
         elif key == ord('v'):
             # Toggle VTuber mode
