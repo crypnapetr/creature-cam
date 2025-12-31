@@ -301,29 +301,14 @@ class VTuberRenderer:
         else:
             character_img_bgr = character_img
 
-        # Create a canvas at output size to warp into
-        warped_canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        # Get face regions for both user and character
+        user_face_points = user_landmarks.image_landmarks[user_landmarks.face_oval_indices]
+        user_face_w = user_face_points[:, 0].max() - user_face_points[:, 0].min()
+        user_face_h = user_face_points[:, 1].max() - user_face_points[:, 1].min()
 
-        # Scale character landmarks to output size
-        scaled_character_landmarks = character_landmarks.image_landmarks.copy()
-        scaled_character_landmarks[:, 0] = scaled_character_landmarks[:, 0] * scale + char_x
-        scaled_character_landmarks[:, 1] = scaled_character_landmarks[:, 1] * scale + char_y
-
-        # Create scaled FaceLandmarks object
-        from face_tracker import FaceLandmarks
-        scaled_char_landmarks = FaceLandmarks(
-            landmarks=character_landmarks.landmarks,
-            image_landmarks=scaled_character_landmarks,
-            face_oval_indices=character_landmarks.face_oval_indices,
-            left_eye_indices=character_landmarks.left_eye_indices,
-            right_eye_indices=character_landmarks.right_eye_indices,
-            lips_indices=character_landmarks.lips_indices,
-            nose_indices=character_landmarks.nose_indices
-        )
-
-        # We need to warp from character landmarks to scaled user landmarks
-        # But the warper expects source and destination to map correctly
-        # So we'll warp at character scale, then composite at the right position
+        char_face_points = character_landmarks.image_landmarks[character_landmarks.face_oval_indices]
+        char_face_w = char_face_points[:, 0].max() - char_face_points[:, 0].min()
+        char_face_h = char_face_points[:, 1].max() - char_face_points[:, 1].min()
 
         # Resize character image to output scale first
         character_resized = cv2.resize(character_img_bgr, (new_w, new_h))
@@ -331,6 +316,9 @@ class VTuberRenderer:
         # Scale character landmarks to resized image
         resized_char_landmarks_pts = character_landmarks.image_landmarks.copy()
         resized_char_landmarks_pts = resized_char_landmarks_pts * scale
+
+        # Import here to avoid circular dependency
+        from face_tracker import FaceLandmarks
 
         resized_char_landmarks = FaceLandmarks(
             landmarks=character_landmarks.landmarks,
