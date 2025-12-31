@@ -1,0 +1,40 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# MediaPipe models (downloaded automatically)
+models/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Generated textures (optional - uncomment if you want to exclude test textures)
+# textures/crab/
+# textures/octopus/
+
+# Temporary files
+*.mp4
+*.mp3
+temp_*
+test_*
+
+# Logs
+*.log
