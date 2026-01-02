@@ -135,13 +135,16 @@ class FacePuppeteer:
         if not self.puppet_landmarks_set or self.puppet.triangulation is None:
             return frame
 
-        # Warp puppet face to match target landmarks
-        warped_face = self._warp_face(
+        # Start with the original frame to avoid black regions
+        warped_face = frame.copy()
+
+        # Warp puppet face onto the frame (not a black canvas)
+        self._warp_face_inplace(
+            warped_face,
             self.puppet.image,
             self.puppet.landmarks.image_landmarks,
             target_landmarks.image_landmarks,
-            self.puppet.triangulation,
-            frame.shape
+            self.puppet.triangulation
         )
 
         # Create full head mask for complete coverage (face + hair + ears + neck)
@@ -154,6 +157,32 @@ class FacePuppeteer:
         output = self._seamless_blend(frame, warped_face, mask, target_landmarks)
 
         return output
+
+    def _warp_face_inplace(self,
+                           dst_image: np.ndarray,
+                           src_image: np.ndarray,
+                           src_landmarks: np.ndarray,
+                           dst_landmarks: np.ndarray,
+                           triangulation: np.ndarray):
+        """
+        Warp source face directly onto destination image (in-place)
+
+        Args:
+            dst_image: Destination image (modified in-place)
+            src_image: Source face image
+            src_landmarks: Source face landmarks
+            dst_landmarks: Destination face landmarks
+            triangulation: Triangle indices
+        """
+        for tri_indices in triangulation:
+            # Source triangle points
+            src_tri = src_landmarks[tri_indices].astype(np.float32)
+
+            # Destination triangle points
+            dst_tri = dst_landmarks[tri_indices].astype(np.float32)
+
+            # Warp triangle directly onto dst_image
+            self._warp_triangle(src_image, dst_image, src_tri, dst_tri)
 
     def _warp_face(self,
                    src_image: np.ndarray,

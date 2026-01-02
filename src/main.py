@@ -44,6 +44,7 @@ class CreatureCam:
         self.show_stats = True
         self.use_puppeteer = False  # Toggle between texture and puppeteer mode
         self.use_vtuber = False  # Toggle for VTuber mode (full character)
+        self.puppeteer_black_bg = False  # Black background for puppeteer mode
 
     def initialize(self) -> bool:
         """
@@ -173,6 +174,7 @@ class CreatureCam:
             print("  r - Reload character (after changing character.png)")
         if self.puppeteer:
             print("  p - Toggle puppeteer mode (face swap)")
+            print("  b - Toggle black background (puppeteer mode)")
         print("  1-9 - Cycle through creatures (texture mode)")
         print("  + - Increase transformation intensity (texture mode)")
         print("  - - Decrease transformation intensity (texture mode)")
@@ -221,7 +223,12 @@ class CreatureCam:
             # Puppeteer or texture mode (only if face detected)
             if self.use_puppeteer and self.puppeteer:
                 # Puppeteer mode: Face swap on webcam
-                frame = self.puppeteer.apply_puppeteering(frame, landmarks)
+                # Optionally use black background
+                if self.puppeteer_black_bg:
+                    black_frame = np.zeros_like(frame)
+                    frame = self.puppeteer.apply_puppeteering(black_frame, landmarks)
+                else:
+                    frame = self.puppeteer.apply_puppeteering(frame, landmarks)
             else:
                 # Texture mode: Texture overlay
                 frame = self.texture_engine.apply_creature_transformation(frame, landmarks)
@@ -348,6 +355,15 @@ class CreatureCam:
                     print("Mode switched to: TEXTURE")
             else:
                 print("VTuber mode not available")
+
+        elif key == ord('b'):
+            # Toggle black background in puppeteer mode
+            if self.puppeteer:
+                self.puppeteer_black_bg = not self.puppeteer_black_bg
+                status = "ON" if self.puppeteer_black_bg else "OFF"
+                print(f"Puppeteer black background: {status}")
+            else:
+                print("Puppeteer not available")
 
         elif key == ord('p'):
             # Toggle puppeteer mode
