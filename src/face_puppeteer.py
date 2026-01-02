@@ -144,8 +144,11 @@ class FacePuppeteer:
             frame.shape
         )
 
-        # Create seamless blend mask
-        mask = self._create_face_mask(target_landmarks, frame.shape[:2])
+        # Create full head mask for complete coverage (face + hair + ears + neck)
+        # Use the enhanced mask from face_tracker for 100% coverage
+        from face_tracker import FaceTracker
+        temp_tracker = FaceTracker.__new__(FaceTracker)
+        mask = temp_tracker.create_full_head_mask(frame, target_landmarks)
 
         # Seamless clone puppet face onto target frame
         output = self._seamless_blend(frame, warped_face, mask, target_landmarks)
