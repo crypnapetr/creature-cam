@@ -80,9 +80,17 @@ class CharacterFaceWarper:
         puppet = FacePuppet.__new__(FacePuppet)
         puppet.image = character_image
         puppet.landmarks = character_landmarks
+
+        # Initialize content detection flags (set by _compute_triangulation)
+        puppet.has_forehead_content = False
+        puppet.has_left_temple_content = False
+        puppet.has_right_temple_content = False
+        puppet.has_neck_content = False
+
         puppet._compute_triangulation()
 
-        temp_puppeteer.puppet.triangulation = puppet.triangulation
+        # Replace temp_puppeteer's puppet with our new one (has content flags set)
+        temp_puppeteer.puppet = puppet
 
         # Generate extended landmarks for target (user) face
         h, w = output_shape[0], output_shape[1]
