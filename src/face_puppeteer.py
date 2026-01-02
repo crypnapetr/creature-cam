@@ -28,6 +28,7 @@ class FacePuppet:
 
         self.landmarks: Optional[FaceLandmarks] = None
         self.triangulation: Optional[np.ndarray] = None
+        self.extended_landmarks: Optional[np.ndarray] = None  # Includes virtual points for full head
 
         print(f"Loaded puppet face: {image_path.name}")
 
@@ -51,8 +52,14 @@ class FacePuppet:
         # Get image dimensions
         h, w = self.image.shape[:2]
 
-        # Add corner points for better coverage
+        # Start with face landmarks
         points = self.landmarks.image_landmarks.copy()
+
+        # Add extended points for full head coverage (hair, forehead, neck)
+        points = self._add_extended_head_points(points, w, h)
+
+        # Store extended landmarks for later use
+        self.extended_landmarks = points
 
         # Create rectangle to bound the triangulation
         rect = (0, 0, w, h)
@@ -85,6 +92,95 @@ class FacePuppet:
 
         self.triangulation = np.array(triangle_indices)
         print(f"Computed {len(self.triangulation)} triangles for face mesh")
+
+    def _add_extended_head_points(self, points: np.ndarray, width: int, height: int) -> np.ndarray:
+        """
+        Add virtual landmarks beyond the face to extend coverage to hair, forehead, and neck
+
+        Args:
+            points: Original face landmarks
+            width: Image width
+            height: Image height
+
+        Returns:
+            Extended landmarks array with additional points for full head coverage
+        """
+        # Get face oval points for reference
+        face_oval = points[self.landmarks.face_oval_indices]
+
+        # Calculate face boundaries
+        face_left = face_oval[:, 0].min()
+        face_right = face_oval[:, 0].max()
+        face_top = face_oval[:, 1].min()
+        face_bottom = face_oval[:, 1].max()
+        face_center_x = (face_left + face_right) / 2
+        face_width = face_right - face_left
+        face_height = face_bottom - face_top
+
+        # Extension distances
+        forehead_extend = int(face_height * 0.6)  # Extend upward for hair/forehead
+        temple_extend = int(face_width * 0.25)    # Extend sideways for ears/hair
+        neck_extend = int(face_height * 0.4)      # Extend downward for neck
+
+        extended_points = []
+
+        # 1. FOREHEAD/HAIRLINE POINTS - Arc above face
+        num_forehead_pts = 9
+        forehead_y = max(0, face_top - forehead_extend)
+        for i in range(num_forehead_pts):
+            # Arc from left temple to right temple
+            t = i / (num_forehead_pts - 1)
+            x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
+            # Slight arc (parabola)
+            arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
+            y = forehead_y - arc_offset
+            extended_points.append([x, max(0, y)])
+
+        # 2. TEMPLE POINTS - Left and right sides
+        num_temple_pts = 5
+        for i in range(num_temple_pts):
+            t = i / (num_temple_pts - 1)
+            y = face_top + t * face_height
+
+            # Left temple
+            extended_points.append([max(0, face_left - temple_extend), y])
+            # Right temple
+            extended_points.append([min(width-1, face_right + temple_extend), y])
+
+        # 3. NECK POINTS - Below chin
+        num_neck_pts = 7
+        neck_y = min(height-1, face_bottom + neck_extend)
+        for i in range(num_neck_pts):
+            t = i / (num_neck_pts - 1)
+            x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+            extended_points.append([x, neck_y])
+
+        # 4. TOP OF HEAD POINTS - For hair coverage
+        num_top_pts = 5
+        top_y = max(0, forehead_y - forehead_extend * 0.3)
+        for i in range(num_top_pts):
+            t = i / (num_top_pts - 1)
+            x = face_left + t * face_width
+            extended_points.append([x, top_y])
+
+        # 5. CORNER POINTS - Ensure edges are covered
+        edge_margin = 5
+        corners = [
+            [edge_margin, edge_margin],  # Top-left
+            [width - edge_margin, edge_margin],  # Top-right
+            [edge_margin, height - edge_margin],  # Bottom-left
+            [width - edge_margin, height - edge_margin],  # Bottom-right
+            [face_center_x, edge_margin],  # Top-center
+            [face_center_x, height - edge_margin],  # Bottom-center
+        ]
+        extended_points.extend(corners)
+
+        # Combine original landmarks with extended points
+        extended_array = np.vstack([points, np.array(extended_points, dtype=np.float32)])
+
+        print(f"Extended landmarks: {len(points)} original + {len(extended_points)} virtual = {len(extended_array)} total")
+
+        return extended_array
 
     def _find_point_index(self, pt: Tuple[float, float], points: np.ndarray, threshold=2.0) -> Optional[int]:
         """Find the index of a point in the landmarks array"""
@@ -119,6 +215,93 @@ class FacePuppeteer:
         self.puppet_landmarks_set = True
         print("Puppet landmarks configured")
 
+    def _generate_target_extended_landmarks(self,
+                                            target_points: np.ndarray,
+                                            target_landmarks: FaceLandmarks,
+                                            width: int,
+                                            height: int) -> np.ndarray:
+        """
+        Generate extended landmarks for target face (mirrors puppet extension)
+
+        Args:
+            target_points: Original 478 MediaPipe landmarks
+            target_landmarks: FaceLandmarks object for accessing indices
+            width: Frame width
+            height: Frame height
+
+        Returns:
+            Extended landmarks matching puppet structure
+        """
+        # Get face oval points for reference
+        face_oval = target_points[target_landmarks.face_oval_indices]
+
+        # Calculate face boundaries
+        face_left = face_oval[:, 0].min()
+        face_right = face_oval[:, 0].max()
+        face_top = face_oval[:, 1].min()
+        face_bottom = face_oval[:, 1].max()
+        face_center_x = (face_left + face_right) / 2
+        face_width = face_right - face_left
+        face_height = face_bottom - face_top
+
+        # Extension distances (same ratios as puppet)
+        forehead_extend = int(face_height * 0.6)
+        temple_extend = int(face_width * 0.25)
+        neck_extend = int(face_height * 0.4)
+
+        extended_points = []
+
+        # 1. FOREHEAD/HAIRLINE POINTS
+        num_forehead_pts = 9
+        forehead_y = max(0, face_top - forehead_extend)
+        for i in range(num_forehead_pts):
+            t = i / (num_forehead_pts - 1)
+            x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
+            arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
+            y = forehead_y - arc_offset
+            extended_points.append([x, max(0, y)])
+
+        # 2. TEMPLE POINTS
+        num_temple_pts = 5
+        for i in range(num_temple_pts):
+            t = i / (num_temple_pts - 1)
+            y = face_top + t * face_height
+            extended_points.append([max(0, face_left - temple_extend), y])
+            extended_points.append([min(width-1, face_right + temple_extend), y])
+
+        # 3. NECK POINTS
+        num_neck_pts = 7
+        neck_y = min(height-1, face_bottom + neck_extend)
+        for i in range(num_neck_pts):
+            t = i / (num_neck_pts - 1)
+            x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+            extended_points.append([x, neck_y])
+
+        # 4. TOP OF HEAD POINTS
+        num_top_pts = 5
+        top_y = max(0, forehead_y - forehead_extend * 0.3)
+        for i in range(num_top_pts):
+            t = i / (num_top_pts - 1)
+            x = face_left + t * face_width
+            extended_points.append([x, top_y])
+
+        # 5. CORNER POINTS
+        edge_margin = 5
+        corners = [
+            [edge_margin, edge_margin],
+            [width - edge_margin, edge_margin],
+            [edge_margin, height - edge_margin],
+            [width - edge_margin, height - edge_margin],
+            [face_center_x, edge_margin],
+            [face_center_x, height - edge_margin],
+        ]
+        extended_points.extend(corners)
+
+        # Combine original with extended
+        extended_array = np.vstack([target_points, np.array(extended_points, dtype=np.float32)])
+
+        return extended_array
+
     def apply_puppeteering(self,
                           frame: np.ndarray,
                           target_landmarks: FaceLandmarks) -> np.ndarray:
@@ -135,15 +318,23 @@ class FacePuppeteer:
         if not self.puppet_landmarks_set or self.puppet.triangulation is None:
             return frame
 
+        # Generate extended landmarks for target face (same structure as puppet)
+        h, w = frame.shape[:2]
+        target_extended = self._generate_target_extended_landmarks(
+            target_landmarks.image_landmarks,
+            target_landmarks,
+            w, h
+        )
+
         # Start with the original frame to avoid black regions
         warped_face = frame.copy()
 
-        # Warp puppet face onto the frame (not a black canvas)
+        # Warp puppet face onto the frame using EXTENDED landmarks
         self._warp_face_inplace(
             warped_face,
             self.puppet.image,
-            self.puppet.landmarks.image_landmarks,
-            target_landmarks.image_landmarks,
+            self.puppet.extended_landmarks,  # Use extended source
+            target_extended,                 # Use extended target
             self.puppet.triangulation
         )
 
