@@ -74,7 +74,7 @@ class CharacterFaceWarper:
             'triangulation': None
         })()
 
-        # Compute triangulation
+        # Compute triangulation with extended landmarks
         temp_puppeteer.puppet.set_landmarks = lambda l: None
         from face_puppeteer import FacePuppet
         puppet = FacePuppet.__new__(FacePuppet)
@@ -84,11 +84,19 @@ class CharacterFaceWarper:
 
         temp_puppeteer.puppet.triangulation = puppet.triangulation
 
-        # Warp face
+        # Generate extended landmarks for target (user) face
+        h, w = output_shape[0], output_shape[1]
+        target_extended = temp_puppeteer._generate_target_extended_landmarks(
+            user_landmarks.image_landmarks,
+            user_landmarks,
+            w, h
+        )
+
+        # Warp face using EXTENDED landmarks
         warped = temp_puppeteer._warp_face(
             character_image,
-            character_landmarks.image_landmarks,
-            user_landmarks.image_landmarks,
+            puppet.extended_landmarks,  # Use extended source (515 points)
+            target_extended,             # Use extended target (515 points)
             puppet.triangulation,
             output_shape
         )
