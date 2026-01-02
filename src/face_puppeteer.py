@@ -55,10 +55,14 @@ class FacePuppet:
         # Start with face landmarks
         points = self.landmarks.image_landmarks.copy()
 
-        # Add extended points for full head coverage (hair, forehead, neck)
-        points = self._add_extended_head_points(points, w, h)
+        # TEMPORARILY DISABLED: Extended landmarks cause black regions/distortion
+        # when character image doesn't have full head content (hair, ears, neck)
+        # TODO: Re-enable when we have character detection or user provides full-head image
 
-        # Store extended landmarks for later use
+        # Add extended points for full head coverage (hair, forehead, neck)
+        # points = self._add_extended_head_points(points, w, h)
+
+        # Store extended landmarks for later use (currently just original face landmarks)
         self.extended_landmarks = points
 
         # Create rectangle to bound the triangulation
@@ -346,23 +350,18 @@ class FacePuppeteer:
         if not self.puppet_landmarks_set or self.puppet.triangulation is None:
             return frame
 
-        # Generate extended landmarks for target face (same structure as puppet)
-        h, w = frame.shape[:2]
-        target_extended = self._generate_target_extended_landmarks(
-            target_landmarks.image_landmarks,
-            target_landmarks,
-            w, h
-        )
+        # TEMPORARILY DISABLED: Extended landmarks
+        # Use original face landmarks only (extended landmarks disabled above)
 
         # Start with the original frame to avoid black regions
         warped_face = frame.copy()
 
-        # Warp puppet face onto the frame using EXTENDED landmarks
+        # Warp puppet face onto the frame using original face landmarks
         self._warp_face_inplace(
             warped_face,
             self.puppet.image,
-            self.puppet.extended_landmarks,  # Use extended source
-            target_extended,                 # Use extended target
+            self.puppet.extended_landmarks,  # Currently same as original landmarks
+            target_landmarks.image_landmarks,  # Use original target landmarks
             self.puppet.triangulation
         )
 
