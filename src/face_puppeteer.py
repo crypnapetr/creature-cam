@@ -67,8 +67,17 @@ class FacePuppet:
         # Compute Delaunay triangulation
         subdiv = cv2.Subdiv2D(rect)
 
+        # Insert points with bounds checking
         for point in points:
-            subdiv.insert(tuple(point.astype(float)))
+            x, y = float(point[0]), float(point[1])
+            # Ensure point is strictly within bounds (leave 1px margin)
+            if 1 <= x < w-1 and 1 <= y < h-1:
+                subdiv.insert((x, y))
+            else:
+                # Clamp to valid range
+                x = max(1.0, min(x, w - 2.0))
+                y = max(1.0, min(y, h - 2.0))
+                subdiv.insert((x, y))
 
         # Get triangles
         triangles = subdiv.getTriangleList()
@@ -126,7 +135,7 @@ class FacePuppet:
 
         # 1. FOREHEAD/HAIRLINE POINTS - Arc above face
         num_forehead_pts = 9
-        forehead_y = max(0, face_top - forehead_extend)
+        forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
         for i in range(num_forehead_pts):
             # Arc from left temple to right temple
             t = i / (num_forehead_pts - 1)
@@ -134,44 +143,52 @@ class FacePuppet:
             # Slight arc (parabola)
             arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
             y = forehead_y - arc_offset
-            extended_points.append([x, max(0, y)])
+            # Clamp to valid bounds
+            x = max(10, min(x, width - 10))
+            y = max(10, min(y, height - 10))
+            extended_points.append([x, y])
 
         # 2. TEMPLE POINTS - Left and right sides
         num_temple_pts = 5
         for i in range(num_temple_pts):
             t = i / (num_temple_pts - 1)
             y = face_top + t * face_height
+            y = max(10, min(y, height - 10))
 
             # Left temple
-            extended_points.append([max(0, face_left - temple_extend), y])
+            x_left = max(10, face_left - temple_extend)
+            extended_points.append([x_left, y])
             # Right temple
-            extended_points.append([min(width-1, face_right + temple_extend), y])
+            x_right = min(width - 10, face_right + temple_extend)
+            extended_points.append([x_right, y])
 
         # 3. NECK POINTS - Below chin
         num_neck_pts = 7
-        neck_y = min(height-1, face_bottom + neck_extend)
+        neck_y = min(height - 10, face_bottom + neck_extend)
         for i in range(num_neck_pts):
             t = i / (num_neck_pts - 1)
             x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+            x = max(10, min(x, width - 10))
             extended_points.append([x, neck_y])
 
         # 4. TOP OF HEAD POINTS - For hair coverage
         num_top_pts = 5
-        top_y = max(0, forehead_y - forehead_extend * 0.3)
+        top_y = max(10, forehead_y - forehead_extend * 0.3)
         for i in range(num_top_pts):
             t = i / (num_top_pts - 1)
             x = face_left + t * face_width
+            x = max(10, min(x, width - 10))
             extended_points.append([x, top_y])
 
         # 5. CORNER POINTS - Ensure edges are covered
-        edge_margin = 5
+        edge_margin = 10  # Increased margin to avoid Subdiv2D bounds issues
         corners = [
             [edge_margin, edge_margin],  # Top-left
             [width - edge_margin, edge_margin],  # Top-right
             [edge_margin, height - edge_margin],  # Bottom-left
             [width - edge_margin, height - edge_margin],  # Bottom-right
-            [face_center_x, edge_margin],  # Top-center
-            [face_center_x, height - edge_margin],  # Bottom-center
+            [max(edge_margin, min(face_center_x, width - edge_margin)), edge_margin],  # Top-center
+            [max(edge_margin, min(face_center_x, width - edge_margin)), height - edge_margin],  # Bottom-center
         ]
         extended_points.extend(corners)
 
@@ -253,47 +270,58 @@ class FacePuppeteer:
 
         # 1. FOREHEAD/HAIRLINE POINTS
         num_forehead_pts = 9
-        forehead_y = max(0, face_top - forehead_extend)
+        forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
         for i in range(num_forehead_pts):
             t = i / (num_forehead_pts - 1)
             x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
             arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
             y = forehead_y - arc_offset
-            extended_points.append([x, max(0, y)])
+            # Clamp to valid bounds
+            x = max(10, min(x, width - 10))
+            y = max(10, min(y, height - 10))
+            extended_points.append([x, y])
 
         # 2. TEMPLE POINTS
         num_temple_pts = 5
         for i in range(num_temple_pts):
             t = i / (num_temple_pts - 1)
             y = face_top + t * face_height
-            extended_points.append([max(0, face_left - temple_extend), y])
-            extended_points.append([min(width-1, face_right + temple_extend), y])
+            y = max(10, min(y, height - 10))
+
+            # Left temple
+            x_left = max(10, face_left - temple_extend)
+            extended_points.append([x_left, y])
+            # Right temple
+            x_right = min(width - 10, face_right + temple_extend)
+            extended_points.append([x_right, y])
 
         # 3. NECK POINTS
         num_neck_pts = 7
-        neck_y = min(height-1, face_bottom + neck_extend)
+        neck_y = min(height - 10, face_bottom + neck_extend)
         for i in range(num_neck_pts):
             t = i / (num_neck_pts - 1)
             x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+            x = max(10, min(x, width - 10))
             extended_points.append([x, neck_y])
 
         # 4. TOP OF HEAD POINTS
         num_top_pts = 5
-        top_y = max(0, forehead_y - forehead_extend * 0.3)
+        top_y = max(10, forehead_y - forehead_extend * 0.3)
         for i in range(num_top_pts):
             t = i / (num_top_pts - 1)
             x = face_left + t * face_width
+            x = max(10, min(x, width - 10))
             extended_points.append([x, top_y])
 
         # 5. CORNER POINTS
-        edge_margin = 5
+        edge_margin = 10  # Increased margin to avoid Subdiv2D bounds issues
         corners = [
             [edge_margin, edge_margin],
             [width - edge_margin, edge_margin],
             [edge_margin, height - edge_margin],
             [width - edge_margin, height - edge_margin],
-            [face_center_x, edge_margin],
-            [face_center_x, height - edge_margin],
+            [max(edge_margin, min(face_center_x, width - edge_margin)), edge_margin],
+            [max(edge_margin, min(face_center_x, width - edge_margin)), height - edge_margin],
         ]
         extended_points.extend(corners)
 
