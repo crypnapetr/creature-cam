@@ -30,6 +30,12 @@ class FacePuppet:
         self.triangulation: Optional[np.ndarray] = None
         self.extended_landmarks: Optional[np.ndarray] = None  # Includes virtual points for full head
 
+        # Content detection flags (which regions have actual image content)
+        self.has_forehead_content = False
+        self.has_left_temple_content = False
+        self.has_right_temple_content = False
+        self.has_neck_content = False
+
         print(f"Loaded puppet face: {image_path.name}")
 
     def set_landmarks(self, landmarks: FaceLandmarks):
@@ -55,14 +61,11 @@ class FacePuppet:
         # Start with face landmarks
         points = self.landmarks.image_landmarks.copy()
 
-        # TEMPORARILY DISABLED: Extended landmarks cause black regions/distortion
-        # when character image doesn't have full head content (hair, ears, neck)
-        # TODO: Re-enable when we have character detection or user provides full-head image
+        # ADAPTIVE EXTENDED LANDMARKS: Only adds virtual points where content exists
+        # Detects hair, temples, neck content and extends landmarks accordingly
+        points = self._add_extended_head_points(points, w, h)
 
-        # Add extended points for full head coverage (hair, forehead, neck)
-        # points = self._add_extended_head_points(points, w, h)
-
-        # Store extended landmarks for later use (currently just original face landmarks)
+        # Store extended landmarks for later use
         self.extended_landmarks = points
 
         # Create rectangle to bound the triangulation
@@ -106,9 +109,51 @@ class FacePuppet:
         self.triangulation = np.array(triangle_indices)
         print(f"Computed {len(self.triangulation)} triangles for face mesh")
 
+    def _has_content_in_region(self, x: int, y: int, width: int, height: int,
+                               sample_size: int = 20) -> bool:
+        """
+        Check if image region has actual content (not black/empty)
+
+        Args:
+            x, y: Top-left corner of region
+            width, height: Region dimensions
+            sample_size: Number of pixels to sample
+
+        Returns:
+            True if region has content, False if mostly empty/black
+        """
+        # Ensure region is within image bounds
+        x = max(0, min(x, self.image.shape[1] - 1))
+        y = max(0, min(y, self.image.shape[0] - 1))
+        w = min(width, self.image.shape[1] - x)
+        h = min(height, self.image.shape[0] - y)
+
+        if w <= 0 or h <= 0:
+            return False
+
+        # Sample pixels in the region
+        region = self.image[y:y+h, x:x+w]
+
+        # Convert to grayscale if needed
+        if len(region.shape) == 3:
+            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = region
+
+        # Check if region has sufficient non-black pixels
+        # Threshold: pixel value > 30 (to handle near-black)
+        non_black_pixels = np.sum(gray > 30)
+        total_pixels = gray.size
+
+        # Consider content present if > 20% of pixels are non-black
+        content_ratio = non_black_pixels / total_pixels if total_pixels > 0 else 0
+
+        return content_ratio > 0.2
+
     def _add_extended_head_points(self, points: np.ndarray, width: int, height: int) -> np.ndarray:
         """
         Add virtual landmarks beyond the face to extend coverage to hair, forehead, and neck
+        ADAPTIVE: Only adds landmarks where actual content exists in the image
 
         Args:
             points: Original face landmarks
@@ -135,54 +180,91 @@ class FacePuppet:
         temple_extend = int(face_width * 0.25)    # Extend sideways for ears/hair
         neck_extend = int(face_height * 0.4)      # Extend downward for neck
 
+        # ADAPTIVE: Detect which regions have content
+        forehead_y = max(0, int(face_top - forehead_extend))
+        neck_y = min(height - 1, int(face_bottom + neck_extend))
+
+        has_forehead_content = self._has_content_in_region(
+            int(face_center_x - face_width/2), forehead_y,
+            int(face_width), int(forehead_extend)
+        )
+        has_left_temple_content = self._has_content_in_region(
+            max(0, int(face_left - temple_extend)), int(face_top),
+            int(temple_extend), int(face_height)
+        )
+        has_right_temple_content = self._has_content_in_region(
+            int(face_right), int(face_top),
+            min(int(temple_extend), width - int(face_right)), int(face_height)
+        )
+        has_neck_content = self._has_content_in_region(
+            int(face_left), int(face_bottom),
+            int(face_width), min(int(neck_extend), height - int(face_bottom))
+        )
+
+        # Store content flags for later use in target generation
+        self.has_forehead_content = has_forehead_content
+        self.has_left_temple_content = has_left_temple_content
+        self.has_right_temple_content = has_right_temple_content
+        self.has_neck_content = has_neck_content
+
+        print(f"Content detection: forehead={has_forehead_content}, "
+              f"left_temple={has_left_temple_content}, right_temple={has_right_temple_content}, "
+              f"neck={has_neck_content}")
+
         extended_points = []
 
-        # 1. FOREHEAD/HAIRLINE POINTS - Arc above face
-        num_forehead_pts = 9
-        forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
-        for i in range(num_forehead_pts):
-            # Arc from left temple to right temple
-            t = i / (num_forehead_pts - 1)
-            x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
-            # Slight arc (parabola)
-            arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
-            y = forehead_y - arc_offset
-            # Clamp to valid bounds
-            x = max(10, min(x, width - 10))
-            y = max(10, min(y, height - 10))
-            extended_points.append([x, y])
+        # 1. FOREHEAD/HAIRLINE POINTS - Arc above face (ONLY if content exists)
+        if has_forehead_content:
+            num_forehead_pts = 9
+            forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
+            for i in range(num_forehead_pts):
+                # Arc from left temple to right temple
+                t = i / (num_forehead_pts - 1)
+                x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
+                # Slight arc (parabola)
+                arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
+                y = forehead_y - arc_offset
+                # Clamp to valid bounds
+                x = max(10, min(x, width - 10))
+                y = max(10, min(y, height - 10))
+                extended_points.append([x, y])
 
-        # 2. TEMPLE POINTS - Left and right sides
+        # 2. TEMPLE POINTS - Left and right sides (ONLY if content exists on each side)
         num_temple_pts = 5
         for i in range(num_temple_pts):
             t = i / (num_temple_pts - 1)
             y = face_top + t * face_height
             y = max(10, min(y, height - 10))
 
-            # Left temple
-            x_left = max(10, face_left - temple_extend)
-            extended_points.append([x_left, y])
-            # Right temple
-            x_right = min(width - 10, face_right + temple_extend)
-            extended_points.append([x_right, y])
+            # Left temple (only if content detected)
+            if has_left_temple_content:
+                x_left = max(10, face_left - temple_extend)
+                extended_points.append([x_left, y])
 
-        # 3. NECK POINTS - Below chin
-        num_neck_pts = 7
-        neck_y = min(height - 10, face_bottom + neck_extend)
-        for i in range(num_neck_pts):
-            t = i / (num_neck_pts - 1)
-            x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
-            x = max(10, min(x, width - 10))
-            extended_points.append([x, neck_y])
+            # Right temple (only if content detected)
+            if has_right_temple_content:
+                x_right = min(width - 10, face_right + temple_extend)
+                extended_points.append([x_right, y])
 
-        # 4. TOP OF HEAD POINTS - For hair coverage
-        num_top_pts = 5
-        top_y = max(10, forehead_y - forehead_extend * 0.3)
-        for i in range(num_top_pts):
-            t = i / (num_top_pts - 1)
-            x = face_left + t * face_width
-            x = max(10, min(x, width - 10))
-            extended_points.append([x, top_y])
+        # 3. NECK POINTS - Below chin (ONLY if content exists)
+        if has_neck_content:
+            num_neck_pts = 7
+            neck_y = min(height - 10, face_bottom + neck_extend)
+            for i in range(num_neck_pts):
+                t = i / (num_neck_pts - 1)
+                x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+                x = max(10, min(x, width - 10))
+                extended_points.append([x, neck_y])
+
+        # 4. TOP OF HEAD POINTS - For hair coverage (ONLY if forehead content exists)
+        if has_forehead_content:
+            num_top_pts = 5
+            top_y = max(10, forehead_y - forehead_extend * 0.3)
+            for i in range(num_top_pts):
+                t = i / (num_top_pts - 1)
+                x = face_left + t * face_width
+                x = max(10, min(x, width - 10))
+                extended_points.append([x, top_y])
 
         # 5. CORNER POINTS - Ensure edges are covered
         edge_margin = 10  # Increased margin to avoid Subdiv2D bounds issues
@@ -243,6 +325,7 @@ class FacePuppeteer:
                                             height: int) -> np.ndarray:
         """
         Generate extended landmarks for target face (mirrors puppet extension)
+        ADAPTIVE: Only generates landmarks where puppet has content
 
         Args:
             target_points: Original 478 MediaPipe landmarks
@@ -251,7 +334,7 @@ class FacePuppeteer:
             height: Frame height
 
         Returns:
-            Extended landmarks matching puppet structure
+            Extended landmarks matching puppet structure (same regions only)
         """
         # Get face oval points for reference
         face_oval = target_points[target_landmarks.face_oval_indices]
@@ -270,52 +353,64 @@ class FacePuppeteer:
         temple_extend = int(face_width * 0.25)
         neck_extend = int(face_height * 0.4)
 
+        # Use puppet's content flags to match structure
+        has_forehead_content = self.puppet.has_forehead_content
+        has_left_temple_content = self.puppet.has_left_temple_content
+        has_right_temple_content = self.puppet.has_right_temple_content
+        has_neck_content = self.puppet.has_neck_content
+
         extended_points = []
 
-        # 1. FOREHEAD/HAIRLINE POINTS
-        num_forehead_pts = 9
-        forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
-        for i in range(num_forehead_pts):
-            t = i / (num_forehead_pts - 1)
-            x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
-            arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
-            y = forehead_y - arc_offset
-            # Clamp to valid bounds
-            x = max(10, min(x, width - 10))
-            y = max(10, min(y, height - 10))
-            extended_points.append([x, y])
+        # 1. FOREHEAD/HAIRLINE POINTS (ONLY if puppet has forehead content)
+        if has_forehead_content:
+            num_forehead_pts = 9
+            forehead_y = max(10, face_top - forehead_extend)  # Keep margin from edge
+            for i in range(num_forehead_pts):
+                t = i / (num_forehead_pts - 1)
+                x = face_left - temple_extend + t * (face_width + 2 * temple_extend)
+                arc_offset = int(forehead_extend * 0.2 * (1 - (2*t - 1)**2))
+                y = forehead_y - arc_offset
+                # Clamp to valid bounds
+                x = max(10, min(x, width - 10))
+                y = max(10, min(y, height - 10))
+                extended_points.append([x, y])
 
-        # 2. TEMPLE POINTS
+        # 2. TEMPLE POINTS (ONLY if puppet has temple content on each side)
         num_temple_pts = 5
         for i in range(num_temple_pts):
             t = i / (num_temple_pts - 1)
             y = face_top + t * face_height
             y = max(10, min(y, height - 10))
 
-            # Left temple
-            x_left = max(10, face_left - temple_extend)
-            extended_points.append([x_left, y])
-            # Right temple
-            x_right = min(width - 10, face_right + temple_extend)
-            extended_points.append([x_right, y])
+            # Left temple (only if puppet has left temple content)
+            if has_left_temple_content:
+                x_left = max(10, face_left - temple_extend)
+                extended_points.append([x_left, y])
 
-        # 3. NECK POINTS
-        num_neck_pts = 7
-        neck_y = min(height - 10, face_bottom + neck_extend)
-        for i in range(num_neck_pts):
-            t = i / (num_neck_pts - 1)
-            x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
-            x = max(10, min(x, width - 10))
-            extended_points.append([x, neck_y])
+            # Right temple (only if puppet has right temple content)
+            if has_right_temple_content:
+                x_right = min(width - 10, face_right + temple_extend)
+                extended_points.append([x_right, y])
 
-        # 4. TOP OF HEAD POINTS
-        num_top_pts = 5
-        top_y = max(10, forehead_y - forehead_extend * 0.3)
-        for i in range(num_top_pts):
-            t = i / (num_top_pts - 1)
-            x = face_left + t * face_width
-            x = max(10, min(x, width - 10))
-            extended_points.append([x, top_y])
+        # 3. NECK POINTS (ONLY if puppet has neck content)
+        if has_neck_content:
+            num_neck_pts = 7
+            neck_y = min(height - 10, face_bottom + neck_extend)
+            for i in range(num_neck_pts):
+                t = i / (num_neck_pts - 1)
+                x = face_left - temple_extend*0.5 + t * (face_width + temple_extend)
+                x = max(10, min(x, width - 10))
+                extended_points.append([x, neck_y])
+
+        # 4. TOP OF HEAD POINTS (ONLY if puppet has forehead content)
+        if has_forehead_content:
+            num_top_pts = 5
+            top_y = max(10, forehead_y - forehead_extend * 0.3)
+            for i in range(num_top_pts):
+                t = i / (num_top_pts - 1)
+                x = face_left + t * face_width
+                x = max(10, min(x, width - 10))
+                extended_points.append([x, top_y])
 
         # 5. CORNER POINTS
         edge_margin = 10  # Increased margin to avoid Subdiv2D bounds issues
@@ -350,18 +445,23 @@ class FacePuppeteer:
         if not self.puppet_landmarks_set or self.puppet.triangulation is None:
             return frame
 
-        # TEMPORARILY DISABLED: Extended landmarks
-        # Use original face landmarks only (extended landmarks disabled above)
+        # Generate extended landmarks for target face (matching puppet's structure)
+        h, w = frame.shape[:2]
+        target_extended = self._generate_target_extended_landmarks(
+            target_landmarks.image_landmarks,
+            target_landmarks,
+            w, h
+        )
 
         # Start with the original frame to avoid black regions
         warped_face = frame.copy()
 
-        # Warp puppet face onto the frame using original face landmarks
+        # Warp puppet face onto the frame using EXTENDED landmarks
         self._warp_face_inplace(
             warped_face,
             self.puppet.image,
-            self.puppet.extended_landmarks,  # Currently same as original landmarks
-            target_landmarks.image_landmarks,  # Use original target landmarks
+            self.puppet.extended_landmarks,  # Adaptive extended landmarks
+            target_extended,                 # Matching target extended landmarks
             self.puppet.triangulation
         )
 

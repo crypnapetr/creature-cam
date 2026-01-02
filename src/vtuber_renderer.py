@@ -84,14 +84,19 @@ class CharacterFaceWarper:
 
         temp_puppeteer.puppet.triangulation = puppet.triangulation
 
-        # TEMPORARILY DISABLED: Extended landmarks
-        # Use original face landmarks only (extended landmarks disabled in face_puppeteer.py)
+        # Generate extended landmarks for target (user) face
+        h, w = output_shape[0], output_shape[1]
+        target_extended = temp_puppeteer._generate_target_extended_landmarks(
+            user_landmarks.image_landmarks,
+            user_landmarks,
+            w, h
+        )
 
-        # Warp face using original face landmarks
+        # Warp face using ADAPTIVE extended landmarks
         warped = temp_puppeteer._warp_face(
             character_image,
-            puppet.extended_landmarks,  # Currently same as original landmarks (478 points)
-            user_landmarks.image_landmarks,  # Use original target landmarks (478 points)
+            puppet.extended_landmarks,  # Adaptive extended landmarks (478+ points)
+            target_extended,             # Matching target extended landmarks (478+ points)
             puppet.triangulation,
             output_shape
         )
